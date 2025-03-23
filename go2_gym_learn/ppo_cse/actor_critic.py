@@ -16,7 +16,7 @@ class AC_Args(PrefixProto, cli=False):
     use_decoder = False
 
 
-class ActorCritic(nn.Module):
+class ActorCritic_Lips(nn.Module):
     is_recurrent = False
 
     def __init__(self, num_obs,

@@ -3,11 +3,13 @@ import torch
 from params_proto import Meta
 from typing import Union
 
-from go2_gym.envs.base.legged_robot import LeggedRobot
-from go2_gym.envs.base.legged_robot_config import Cfg
+#from go2_gym.envs.base.legged_robot import LeggedRobot
+from go2_gym.envs.base.go2_robot import Go2
+#from go2_gym.envs.base.legged_robot_config import Cfg
+from go2_gym.envs.base.go2_robot_config import Cfg
 
 
-class VelocityTrackingEasyEnv(LeggedRobot):
+class VelocityTrackingEasyEnv(Go2):
     def __init__(self, sim_device, headless, num_envs=None, prone=False, deploy=False,
                  cfg: Cfg = None, eval_cfg: Cfg = None, initial_dynamics_dict=None, physics_engine="SIM_PHYSX"):
 

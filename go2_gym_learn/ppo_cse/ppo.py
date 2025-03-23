@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 from params_proto import PrefixProto
 
-from go2_gym_learn.ppo_cse import ActorCritic
+from go2_gym_learn.ppo_cse import ActorCritic_Lips
 from go2_gym_learn.ppo_cse import RolloutStorage
 from go2_gym_learn.ppo_cse import caches
 
@@ -31,7 +31,7 @@ class PPO_Args(PrefixProto):
 
 
 class PPO:
-    actor_critic: ActorCritic
+    actor_critic: ActorCritic_Lips
 
     def __init__(self, actor_critic, device='cpu'):
 

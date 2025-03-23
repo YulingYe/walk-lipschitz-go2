@@ -7,7 +7,7 @@ import torch
 from ml_logger import logger
 from params_proto import PrefixProto
 
-from .actor_critic import ActorCritic
+from .actor_critic_lips import ActorCritic_Lips
 from .rollout_storage import RolloutStorage
 #from .discriminator import Discriminator
 
@@ -62,12 +62,13 @@ class RunnerArgs(PrefixProto, cli=False):
 class Runner:
 
     def __init__(self, env, device='cpu'):
-        from .ppo import PPO
+     #  from .ppo import PPO
+        from .lips import LIPS
 
         self.device = device
         self.env = env
 
-        actor_critic = ActorCritic(self.env.num_obs,
+        actor_critic = ActorCritic_Lips(self.env.num_obs,
                                       self.env.num_privileged_obs,
                                       self.env.num_obs_history,
                                       self.env.num_actions,
@@ -90,7 +91,8 @@ class Runner:
                     self.env.curricula[gait_id].weights = distribution_last[f"weights_{gait_name}"]
                     print(gait_name)
 
-        self.alg = PPO(actor_critic, device=self.device)
+        #self.alg = PPO(actor_critic, device=self.device)
+        self.alg = LIPS(actor_critic, device=self.device)
         self.num_steps_per_env = RunnerArgs.num_steps_per_env
 
         # init storage and model

@@ -2,8 +2,8 @@ from typing import Union
 
 from params_proto import Meta
 
-from go2_gym.envs.base.legged_robot_config import Cfg
-
+#from go2_gym.envs.base.legged_robot_config import Cfg
+from go2_gym.envs.base.go2_robot_config import Cfg
 
 def config_go2(Cnfg: Union[Cfg, Meta]):
     _ = Cnfg.init_state
