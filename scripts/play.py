@@ -8,7 +8,8 @@ import glob
 import pickle as pkl
 
 from go2_gym.envs import *
-from go2_gym.envs.base.legged_robot_config import Cfg
+#from go2_gym.envs.base.legged_robot_config import Cfg
+from go2_gym.envs.base.go2_robot_config import Cfg
 from go2_gym.envs.go2.go2_config import config_go2
 from go2_gym.envs.go2.velocity_tracking import VelocityTrackingEasyEnv
 

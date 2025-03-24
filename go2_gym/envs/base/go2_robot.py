@@ -10,11 +10,12 @@ assert gymtorch
 import torch
 
 from go2_gym import MINI_GYM_ROOT_DIR
+from go2_gym.datasets import MotionLoader
 #from go2_gym.envs.base.base_task import BaseTask
 from go2_gym.envs.base.legged_robot import LeggedRobot
 from go2_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, get_scale_shift
 from go2_gym.utils.terrain import Terrain
-from .go2_robot_config import Cfg
+from go2_gym.envs.base.go2_robot_config import Cfg
 
 
 class Go2(LeggedRobot):
@@ -57,6 +58,34 @@ class Go2(LeggedRobot):
         self.record_eval_now = False
         self.collecting_evaluation = False
         self.num_still_evaluating = 0
+
+        # load AMP components
+        
+        self.reference_motion_file = self.cfg.motion_loader.reference_motion_file #运动参考文件
+        self.test_mode = self.cfg.motion_loader.test_mode # 测试模式
+        self.test_observation_dim = self.cfg.motion_loader.test_observation_dim #测试模式维度
+        self.reference_observation_horizon = self.cfg.motion_loader.reference_observation_horizon #参考观测维度
+        self.motion_loader = MotionLoader(
+            device=self.device,
+            motion_file=self.reference_motion_file,
+            corruption_level=self.cfg.motion_loader.corruption_level,
+            reference_observation_horizon=self.reference_observation_horizon,
+            test_mode=self.test_mode,
+            test_observation_dim=self.test_observation_dim
+        )
+        self.reference_state_idx_dict = self.motion_loader.state_idx_dict
+        self.reference_full_dim = sum([ids[1] - ids[0] for ids in self.reference_state_idx_dict.values()])
+        self.reference_observation_dim = sum([ids[1] - ids[0] for state, ids in self.reference_state_idx_dict.items() if ((state != "base_pos") and (state != "base_quat"))])
+        self.wasabi_states = torch.zeros(
+            self.num_envs, self.reference_full_dim, dtype=torch.float, device=self.device, requires_grad=False
+        )
+        self.discriminator = None # assigned in runner
+        self.wasabi_state_normalizer = None # assigned in runner
+        self.wasabi_style_reward_normalizer = None # assigned in runner
+        self.wasabi_observation_buf = torch.zeros(
+            self.num_envs, self.reference_observation_horizon, self.reference_observation_dim, dtype=torch.float, device=self.device, requires_grad=False
+        )
+        self.wasabi_observation_buf[:, -1] = self.get_wasabi_observations()
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -282,6 +311,17 @@ class Go2(LeggedRobot):
                 self.command_sums[name] += self.reward_scales[name] + rew
             else:
                 self.command_sums[name] += rew
+
+        if self.discriminator is not None and self.wasabi_state_normalizer is not None:
+            self.next_wasabi_observations = self.get_wasabi_observations()
+            wasabi_observation_buf = torch.cat((self.wasabi_observation_buf[:, 1:], self.next_wasabi_observations.unsqueeze(1)), dim=1)
+            task_rew = self.rew_buf # 任务奖励（其他基础奖励）
+            # 计算模仿奖励
+            tot_rew, style_rew = self.discriminator.predict_wasabi_reward(wasabi_observation_buf, task_rew, self.dt, self.wasabi_state_normalizer, self.wasabi_style_reward_normalizer)
+            self.episode_sums["task"] += task_rew # 回合总任务奖励
+            self.episode_sums["style"] += style_rew # 回合总风格奖励
+            self.rew_buf = tot_rew
+
         if self.cfg.rewards.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
         elif self.cfg.rewards.only_positive_rewards_ji22_style: #TODO: update
@@ -1806,3 +1846,10 @@ class Go2(LeggedRobot):
         heights = torch.min(heights, heights3)
 
         return heights.view(len(env_ids), -1) * self.terrain.cfg.vertical_scale
+
+    def get_wasabi_observations(self):
+        if self.test_mode:
+            wasabi_obs = torch.zeros(self.num_envs, self.test_observation_dim, device=self.device, requires_grad=False)
+        else:
+            wasabi_obs = self.wasabi_states[:, self.motion_loader.observation_start_dim:].clone()
+        return wasabi_obs

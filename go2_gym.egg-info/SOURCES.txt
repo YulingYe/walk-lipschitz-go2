@@ -7,10 +7,14 @@ go2_gym.egg-info/SOURCES.txt
 go2_gym.egg-info/dependency_links.txt
 go2_gym.egg-info/requires.txt
 go2_gym.egg-info/top_level.txt
+go2_gym/datasets/__init__.py
+go2_gym/datasets/motion_loader.py
 go2_gym/envs/__init__.py
 go2_gym/envs/base/__init__.py
 go2_gym/envs/base/base_task.py
 go2_gym/envs/base/curriculum.py
+go2_gym/envs/base/go2_robot.py
+go2_gym/envs/base/go2_robot_config.py
 go2_gym/envs/base/legged_robot.py
 go2_gym/envs/base/legged_robot_config.py
 go2_gym/envs/go2/__init__.py
@@ -52,6 +56,9 @@ go2_gym_learn/ppo/ppo.py
 go2_gym_learn/ppo/rollout_storage.py
 go2_gym_learn/ppo_cse/__init__.py
 go2_gym_learn/ppo_cse/actor_critic.py
+go2_gym_learn/ppo_cse/actor_critic_lips.py
+go2_gym_learn/ppo_cse/discriminator.py
+go2_gym_learn/ppo_cse/lips.py
 go2_gym_learn/ppo_cse/metrics_caches.py
 go2_gym_learn/ppo_cse/ppo.py
 go2_gym_learn/ppo_cse/rollout_storage.py

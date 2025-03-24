@@ -6,6 +6,7 @@ import numpy as np
 from params_proto import PrefixProto
 
 from go2_gym_learn.ppo_cse import ActorCritic_Lips
+from go2_gym_learn.ppo_cse import Discriminator
 from go2_gym_learn.ppo_cse import RolloutStorage
 from go2_gym_learn.ppo_cse import caches
 
@@ -32,6 +33,7 @@ class LIPS_Args(PrefixProto):
 
 class LIPS:
     actor_critic: ActorCritic_Lips
+    discriminator: Discriminator
 
     def __init__(self, actor_critic, device='cpu'):
 
@@ -50,6 +52,34 @@ class LIPS:
         self.transition = RolloutStorage.Transition()
 
         self.learning_rate = LIPS_Args.learning_rate
+
+        # Discriminator components
+        self.discriminator = discriminator
+        self.discriminator.to(self.device)
+        self.wasabi_policy_data = ReplayBuffer(discriminator.observation_dim, discriminator.observation_horizon, wasabi_replay_buffer_size, device) #wasabi策略数据
+        self.wasabi_expert_data = wasabi_expert_data #wasabi参考数据
+        self.wasabi_state_normalizer = wasabi_state_normalizer #wasabi状态规范化
+        self.wasabi_style_reward_normalizer = wasabi_style_reward_normalizer #wasabi风格规范化
+
+        # Discriminator parameters
+        self.discriminator_learning_rate = discriminator_learning_rate
+        self.discriminator_momentum = discriminator_momentum
+        self.discriminator_weight_decay = discriminator_weight_decay
+        self.discriminator_gradient_penalty_coef = discriminator_gradient_penalty_coef
+        self.discriminator_loss_function = discriminator_loss_function
+        self.discriminator_num_mini_batches = discriminator_num_mini_batches
+
+        if self.discriminator_loss_function == "WassersteinLoss":
+            discriminator_optimizer = optim.RMSprop
+        else:
+            discriminator_optimizer = optim.SGD
+        self.discriminator_optimizer = discriminator_optimizer(
+                                                    self.discriminator.parameters(),
+                                                    lr=self.discriminator_learning_rate,
+                                                    momentum=self.discriminator_momentum,
+                                                    weight_decay=self.discriminator_weight_decay,
+                                                )
+
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, privileged_obs_shape, obs_history_shape,
                      action_shape):

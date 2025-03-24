@@ -7,8 +7,5 @@ runs
 .cache
 *.json
 __pycache__
-scripts/final_resember_bounding.pt
-scripts/final_resember_pronking.pt
-scripts/final_resember_trotting.pt
-scripts/final_resember.pt
-scripts/motion_data.pt
+scripts/*.pt
+resources/robots/go2/datasets/*.pt

@@ -9,7 +9,7 @@ from params_proto import PrefixProto
 
 from .actor_critic_lips import ActorCritic_Lips
 from .rollout_storage import RolloutStorage
-#from .discriminator import Discriminator
+from .discriminator import Discriminator
 
 def class_to_dict(obj) -> dict:
     if not hasattr(obj, "__dict__"):

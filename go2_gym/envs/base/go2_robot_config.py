@@ -1,5 +1,5 @@
 # License: see [LICENSE, LICENSES/legged_gym/LICENSE]
-
+from go2_gym import MINI_GYM_ROOT_DIR
 from params_proto import PrefixProto, ParamsProto
 
 
@@ -270,6 +270,13 @@ class Cfg(PrefixProto, cli=False):
         max_push_vel_xy = 1.
         randomize_lag_timesteps = True
         lag_timesteps = 6
+
+    class motion_loader:
+        reference_motion_file = MINI_GYM_ROOT_DIR + "/resources/robots/go2/datasets/final_resember_pronking.pt"
+        corruption_level = 0.0
+        reference_observation_horizon = 2
+        test_mode = False
+        test_observation_dim = None # observation_dim of reference motion
 
     class rewards(PrefixProto, cli=False):
         only_positive_rewards = True  # if true negative total rewards are clipped at zero (avoids early termination problems)
