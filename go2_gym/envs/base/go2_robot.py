@@ -159,11 +159,17 @@ class Go2(LeggedRobot):
         self.last_joint_pos_target[:] = self.joint_pos_target[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
+        self.next_wasabi_observations = self.get_wasabi_observations()
+        self.update_wasabi_observation_buf()
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
 
         self._render_headless()
+
+    def update_wasabi_observation_buf(self):
+        self.wasabi_observation_buf[:, :-1] = self.wasabi_observation_buf[:, 1:].clone()
+        self.wasabi_observation_buf[:, -1] = self.next_wasabi_observations.clone()
 
     def check_termination(self):
         """ Check if environments need to be reset
@@ -339,6 +345,9 @@ class Go2(LeggedRobot):
         self.command_sums["lin_vel_residual"] += (self.base_lin_vel[:, 0] - self.commands[:, 0]) ** 2
         self.command_sums["ang_vel_residual"] += (self.base_ang_vel[:, 2] - self.commands[:, 2]) ** 2
         self.command_sums["ep_timesteps"] += 1
+
+    def get_wasabi_observation_buf(self):
+        return self.wasabi_observation_buf.clone()
 
     def compute_observations(self):
         """ Computes observations

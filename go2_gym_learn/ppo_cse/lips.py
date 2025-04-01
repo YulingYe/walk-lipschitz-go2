@@ -7,6 +7,7 @@ from params_proto import PrefixProto
 
 from go2_gym_learn.ppo_cse import ActorCritic_Lips
 from go2_gym_learn.ppo_cse import Discriminator
+from go2_gym_learn.ppo_cse import ReplayBuffer
 from go2_gym_learn.ppo_cse import RolloutStorage
 from go2_gym_learn.ppo_cse import caches
 
@@ -35,10 +36,25 @@ class LIPS:
     actor_critic: ActorCritic_Lips
     discriminator: Discriminator
 
-    def __init__(self, actor_critic, device='cpu'):
+    def __init__(
+            self, 
+            actor_critic, 
+            discriminator,
+            wasabi_expert_data,
+            wasabi_state_normalizer,
+            wasabi_style_reward_normalizer,
+
+            device='cpu',
+            discriminator_learning_rate=0.000025,
+            discriminator_momentum=0.9,
+            discriminator_weight_decay=0.0005,
+            discriminator_gradient_penalty_coef=5,
+            discriminator_loss_function="MSELoss", # MSELoss
+            discriminator_num_mini_batches=10,
+            wasabi_replay_buffer_size=100000,
+        ):
 
         self.device = device
-
         # PPO components
         self.actor_critic = actor_critic
         self.actor_critic.to(device)
@@ -92,7 +108,7 @@ class LIPS:
     def train_mode(self):
         self.actor_critic.train()
 
-    def act(self, obs, privileged_obs, obs_history):
+    def act(self, obs, privileged_obs, obs_history, wasabi_observation_buf):
         # Compute the actions and values
         self.transition.actions = self.actor_critic.act(obs_history).detach()
         self.transition.values = self.actor_critic.evaluate(obs_history, privileged_obs).detach()
@@ -104,9 +120,10 @@ class LIPS:
         self.transition.critic_observations = obs
         self.transition.privileged_observations = privileged_obs
         self.transition.observation_histories = obs_history
+        self.wasabi_observation_buf = wasabi_observation_buf.clone()
         return self.transition.actions
 
-    def process_env_step(self, rewards, dones, infos):
+    def process_env_step(self, rewards, dones, infos, wasabi_obs):
         self.transition.rewards = rewards.clone()
         self.transition.dones = dones
         self.transition.env_bins = infos["env_bins"]
@@ -117,6 +134,8 @@ class LIPS:
 
         # Record the transition
         self.storage.add_transitions(self.transition)
+        wasabi_observation_buf = torch.cat((self.wasabi_observation_buf[:, 1:], wasabi_obs.unsqueeze(1)), dim=1)
+        self.wasabi_policy_data.insert(wasabi_observation_buf)
         self.transition.clear()
         self.actor_critic.reset(dones)
 
@@ -133,6 +152,11 @@ class LIPS:
         mean_adaptation_module_test_loss = 0
         mean_decoder_test_loss = 0
         mean_decoder_test_loss_student = 0
+        mean_wasabi_loss = 0
+        mean_grad_pen_loss = 0
+        mean_policy_pred = 0
+        mean_expert_pred = 0
+
         generator = self.storage.mini_batch_generator(LIPS_Args.num_mini_batches, LIPS_Args.num_learning_epochs)
         for obs_batch, critic_obs_batch, privileged_obs_batch, obs_history_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, old_actions_log_prob_batch, \
             old_mu_batch, old_sigma_batch, masks_batch, env_bins_batch in generator:
@@ -220,6 +244,58 @@ class LIPS:
 
                 mean_adaptation_module_loss += adaptation_loss.item()
                 mean_adaptation_module_test_loss += adaptation_test_loss.item()
+        
+        # Discriminator update
+        wasabi_policy_generator = self.wasabi_policy_data.feed_forward_generator(
+            self.discriminator_num_mini_batches,
+            self.storage.num_envs * self.storage.num_transitions_per_env // self.discriminator_num_mini_batches) #策略数据生成
+        wasabi_expert_generator = self.wasabi_expert_data.feed_forward_generator(
+            self.discriminator_num_mini_batches,
+            self.storage.num_envs * self.storage.num_transitions_per_env // self.discriminator_num_mini_batches) #专家数据生成
+
+        for sample_wasabi_policy, sample_wasabi_expert in zip(wasabi_policy_generator, wasabi_expert_generator):
+
+            # Discriminator loss
+            policy_state_buf = torch.zeros_like(sample_wasabi_policy)
+            expert_state_buf = torch.zeros_like(sample_wasabi_expert)
+            if self.wasabi_state_normalizer is not None:
+                for i in range(self.discriminator.observation_horizon):
+                    with torch.no_grad():
+                        policy_state_buf[:, i] = self.wasabi_state_normalizer.normalize(sample_wasabi_policy[:, i])
+                        expert_state_buf[:, i] = self.wasabi_state_normalizer.normalize(sample_wasabi_expert[:, i])
+            policy_d = self.discriminator(policy_state_buf.flatten(1, 2))
+            expert_d = self.discriminator(expert_state_buf.flatten(1, 2))
+            # 判别器损失函数选择
+            if self.discriminator_loss_function == "BCEWithLogitsLoss":
+                expert_loss = torch.nn.BCEWithLogitsLoss()(expert_d, torch.ones_like(expert_d))
+                policy_loss = torch.nn.BCEWithLogitsLoss()(policy_d, torch.zeros_like(policy_d))
+            elif self.discriminator_loss_function == "MSELoss":
+                expert_loss = torch.nn.MSELoss()(expert_d, torch.ones(expert_d.size(), device=self.device))
+                policy_loss = torch.nn.MSELoss()(policy_d, -1 * torch.ones(policy_d.size(), device=self.device))
+            elif self.discriminator_loss_function == "WassersteinLoss":
+                expert_loss = -expert_d.mean()
+                policy_loss = policy_d.mean()
+            else:
+                raise ValueError("Unexpected loss function specified")
+            wasabi_loss = 0.5 * (expert_loss + policy_loss)
+            grad_pen_loss = self.discriminator.compute_grad_pen(sample_wasabi_expert,
+                                                                lambda_=self.discriminator_gradient_penalty_coef) #计算技能判别梯度
+
+            # Gradient step
+            discriminator_loss = wasabi_loss + grad_pen_loss
+            self.discriminator_optimizer.zero_grad()
+            discriminator_loss.backward()
+            self.discriminator_optimizer.step()
+
+            if self.wasabi_state_normalizer is not None:
+                self.wasabi_state_normalizer.update(sample_wasabi_policy[:, 0])
+                self.wasabi_state_normalizer.update(sample_wasabi_expert[:, 0])
+
+            mean_wasabi_loss += wasabi_loss.item()
+            mean_grad_pen_loss += grad_pen_loss.item()
+            mean_policy_pred += policy_d.mean().item()
+            mean_expert_pred += expert_d.mean().item()
+
 
         num_updates = LIPS_Args.num_learning_epochs * LIPS_Args.num_mini_batches
         mean_value_loss /= num_updates
@@ -230,6 +306,14 @@ class LIPS:
         mean_adaptation_module_test_loss /= (num_updates * LIPS_Args.num_adaptation_module_substeps)
         mean_decoder_test_loss /= (num_updates * LIPS_Args.num_adaptation_module_substeps)
         mean_decoder_test_loss_student /= (num_updates * LIPS_Args.num_adaptation_module_substeps)
+
+        discriminator_num_updates = self.discriminator_num_mini_batches
+        mean_wasabi_loss /= discriminator_num_updates
+        mean_grad_pen_loss /= discriminator_num_updates
+        mean_policy_pred /= discriminator_num_updates
+        mean_expert_pred /= discriminator_num_updates
+
         self.storage.clear()
 
-        return mean_value_loss, mean_surrogate_loss, mean_adaptation_module_loss, mean_decoder_loss, mean_decoder_loss_student, mean_adaptation_module_test_loss, mean_decoder_test_loss, mean_decoder_test_loss_student
+        return mean_value_loss, mean_surrogate_loss, mean_adaptation_module_loss, mean_decoder_loss, mean_decoder_loss_student, mean_adaptation_module_test_loss, mean_decoder_test_loss, mean_decoder_test_loss_student, \
+               mean_wasabi_loss, mean_grad_pen_loss, mean_policy_pred, mean_expert_pred

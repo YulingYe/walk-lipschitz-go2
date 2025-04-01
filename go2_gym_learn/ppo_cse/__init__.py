@@ -8,8 +8,10 @@ from ml_logger import logger
 from params_proto import PrefixProto
 
 from .actor_critic_lips import ActorCritic_Lips
+from .replay_buffer import ReplayBuffer
 from .rollout_storage import RolloutStorage
 from .discriminator import Discriminator
+from .normalizer import Normalizer
 
 def class_to_dict(obj) -> dict:
     if not hasattr(obj, "__dict__"):
@@ -42,9 +44,10 @@ caches = DataCaches(1)
 
 class RunnerArgs(PrefixProto, cli=False):
     # runner
-    algorithm_class_name = 'RMA'
+    #algorithm_class_name = 'RMA'
     num_steps_per_env = 24  # per iteration
     max_iterations = 1500  # number of policy updates
+    normalize_style_reward = True
 
     # logging
     save_interval = 400  # check for potential saves every this many iterations
@@ -57,14 +60,20 @@ class RunnerArgs(PrefixProto, cli=False):
     checkpoint = -1  # -1 = last saved model
     resume_path = None  # updated from load_run and chkpt
     resume_curriculum = True
-
+    
+    # discriminator
+    # class discriminator:
+    #     reward_coef = 0.1
+    #     reward_lerp = 0.9 # wasabi_reward = (1 - reward_lerp) * style_reward + reward_lerp * task_reward
+    #     style_reward_function = "wasserstein_mapping" # log_mapping, quad_mapping, wasserstein_mapping
+    #     shape = [512, 256]
 
 class Runner:
 
     def __init__(self, env, device='cpu'):
      #  from .ppo import PPO
         from .lips import LIPS
-
+        
         self.device = device
         self.env = env
 
@@ -91,8 +100,19 @@ class Runner:
                     self.env.curricula[gait_id].weights = distribution_last[f"weights_{gait_name}"]
                     print(gait_name)
 
+        wasabi_expert_data = self.env.motion_loader
+        wasabi_state_normalizer = Normalizer(wasabi_expert_data.observation_dim, self.device)
+        if RunnerArgs.normalize_style_reward :
+            wasabi_style_reward_normalizer = Normalizer(1, self.device)
+        else:
+            wasabi_style_reward_normalizer = None
+        discriminator = Discriminator(
+            observation_dim = wasabi_expert_data.observation_dim,
+            observation_horizon = self.env.reference_observation_horizon,
+            device=self.device,).to(self.device)
+
         #self.alg = PPO(actor_critic, device=self.device)
-        self.alg = LIPS(actor_critic, device=self.device)
+        self.alg = LIPS(actor_critic, discriminator, wasabi_expert_data, wasabi_state_normalizer, wasabi_style_reward_normalizer, device=self.device)
         self.num_steps_per_env = RunnerArgs.num_steps_per_env
 
         # init storage and model
@@ -120,12 +140,13 @@ class Runner:
         # split train and test envs
         num_train_envs = self.env.num_train_envs
 
+        wasabi_observation_buf = self.env.get_wasabi_observation_buf() #获得技能观测空间
         obs_dict = self.env.get_observations()  # TODO: check, is this correct on the first step?
         obs, privileged_obs, obs_history = obs_dict["obs"], obs_dict["privileged_obs"], obs_dict["obs_history"]
-        obs, privileged_obs, obs_history = obs.to(self.device), privileged_obs.to(self.device), obs_history.to(
-            self.device)
+        obs, privileged_obs, obs_history, wasabi_observation_buf = obs.to(self.device), privileged_obs.to(self.device), obs_history.to(
+            self.device), wasabi_observation_buf.to(self.device)
         self.alg.actor_critic.train()  # switch to train mode (for dropout for example)
-        
+        self.alg.discriminator.train()
 
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
@@ -141,7 +162,7 @@ class Runner:
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
                     actions_train = self.alg.act(obs[:num_train_envs], privileged_obs[:num_train_envs],
-                                                 obs_history[:num_train_envs])
+                                                 obs_history[:num_train_envs], wasabi_observation_buf)
                     if eval_expert: #教师策略
                         actions_eval = self.alg.actor_critic.act_teacher(obs_history[num_train_envs:],
                                                                          privileged_obs[num_train_envs:])
@@ -151,10 +172,12 @@ class Runner:
                     obs_dict, rewards, dones, infos = ret #观察奖励其他信息返回
                     obs, privileged_obs, obs_history = obs_dict["obs"], obs_dict["privileged_obs"], obs_dict[
                         "obs_history"]
-
-                    obs, privileged_obs, obs_history, rewards, dones = obs.to(self.device), privileged_obs.to(
-                        self.device), obs_history.to(self.device), rewards.to(self.device), dones.to(self.device)
-                    self.alg.process_env_step(rewards[:num_train_envs], dones[:num_train_envs], infos) #环境信息步长处理
+                    next_wasabi_obs = self.env.get_wasabi_observations() #下一模仿观测空间
+                    obs, privileged_obs, obs_history, next_wasabi_obs, rewards, dones = obs.to(self.device), privileged_obs.to(
+                        self.device), obs_history.to(self.device), next_wasabi_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
+                    wasabi_observation_buf[:, :-1] = wasabi_observation_buf[:, 1:].clone()
+                    wasabi_observation_buf[:, -1] = next_wasabi_obs.clone()
+                    self.alg.process_env_step(rewards[:num_train_envs], dones[:num_train_envs], infos, next_wasabi_obs) #环境信息步长处理
 
                     if 'train/episode' in infos:
                         with logger.Prefix(metrics="train/episode"):
@@ -204,7 +227,8 @@ class Runner:
                                          "distribution": distribution},
                                          path=f"curriculum/distribution.pkl", append=True)
 
-            mean_value_loss, mean_surrogate_loss, mean_adaptation_module_loss, mean_decoder_loss, mean_decoder_loss_student, mean_adaptation_module_test_loss, mean_decoder_test_loss, mean_decoder_test_loss_student = self.alg.update()
+            mean_value_loss, mean_surrogate_loss, mean_adaptation_module_loss, mean_decoder_loss, mean_decoder_loss_student, mean_adaptation_module_test_loss, mean_decoder_test_loss, mean_decoder_test_loss_student, \
+            mean_wasabi_loss, mean_grad_pen_loss, mean_policy_pred, mean_expert_pred    = self.alg.update()
             stop = time.time()
             learn_time = stop - start
 
@@ -219,7 +243,11 @@ class Runner:
                 mean_decoder_loss_student=mean_decoder_loss_student,
                 mean_decoder_test_loss=mean_decoder_test_loss,
                 mean_decoder_test_loss_student=mean_decoder_test_loss_student,
-                mean_adaptation_module_test_loss=mean_adaptation_module_test_loss
+                mean_adaptation_module_test_loss=mean_adaptation_module_test_loss,
+                mean_wasabi_loss = mean_wasabi_loss, 
+                mean_grad_pen_loss = mean_grad_pen_loss, 
+                mean_policy_pred = mean_policy_pred, 
+                mean_expert_pred = mean_expert_pred
             )
 
             if RunnerArgs.save_video_interval:

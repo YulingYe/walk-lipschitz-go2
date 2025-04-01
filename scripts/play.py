@@ -84,7 +84,7 @@ def load_env(label, headless=False):
 
     # load policy
     from ml_logger import logger
-    from go2_gym_learn.ppo_cse.actor_critic import ActorCritic
+    from go2_gym_learn.ppo_cse.actor_critic_lips import ActorCritic_Lips
 
     policy = load_policy(logdir)
 
@@ -100,7 +100,7 @@ def play_go2(headless=True):
     import os
 
     # label = "gait-conditioned-agility/pretrain-v0/train"
-    label = "gait-conditioned-agility/2025-03-20/train"
+    label = "gait-conditioned-agility/2025-03-30/train"
     
 
     env, policy = load_env(label, headless=headless)
@@ -116,7 +116,7 @@ def play_go2(headless=True):
     body_height_cmd = 0.0
     step_frequency_cmd = 3.0 #3.0
     # gait = torch.tensor(gaits["trotting"])
-    gait = torch.tensor(gaits["pronking"])
+    gait = torch.tensor(gaits["trotting"])
     footswing_height_cmd = 0.08
     pitch_cmd = 0.0
     roll_cmd = 0.0

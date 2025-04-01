@@ -20,7 +20,6 @@ class VelocityTrackingEasyEnv(Go2):
         gymutil.parse_sim_config(vars(cfg.sim), sim_params)
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless, eval_cfg, initial_dynamics_dict)
 
-
     def step(self, actions):
         self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras = super().step(actions)
 
@@ -49,4 +48,3 @@ class VelocityTrackingEasyEnv(Go2):
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         return obs
-

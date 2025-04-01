@@ -17,6 +17,8 @@ def train_go2(headless=True):
     from go2_gym_learn.ppo_cse.ppo import PPO_Args
     from go2_gym_learn.ppo_cse import RunnerArgs
 
+    from go2_gym_learn.utils.helpers import class_to_dict
+
     config_go2(Cfg)
 
     Cfg.commands.num_lin_vel_bins = 30
@@ -215,6 +217,7 @@ def train_go2(headless=True):
     env = HistoryWrapper(env)
     gpu_id = 0
     runner = Runner(env, device=f"cuda:{gpu_id}")
+
     # runner.learn(num_learning_iterations=100000, init_at_random_ep_len=True, eval_freq=100)
     print("Cfg.commands.body_pitch_range", Cfg.commands.body_pitch_range)
     runner.learn(num_learning_iterations=10000, init_at_random_ep_len=True, eval_freq=100)

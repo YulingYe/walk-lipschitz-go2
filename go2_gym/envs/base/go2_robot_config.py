@@ -271,7 +271,7 @@ class Cfg(PrefixProto, cli=False):
         randomize_lag_timesteps = True
         lag_timesteps = 6
 
-    class motion_loader:
+    class motion_loader(PrefixProto, cli=False):
         reference_motion_file = MINI_GYM_ROOT_DIR + "/resources/robots/go2/datasets/final_resember_pronking.pt"
         corruption_level = 0.0
         reference_observation_horizon = 2
